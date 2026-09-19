@@ -1,18 +1,15 @@
 import re
 from urllib.parse import urljoin
 
-import requests as req
+from http_client import make_session
 from bs4 import BeautifulSoup as bs
-import urllib3
 
 from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 
-urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-session = req.Session()
-session.verify = False
+session = make_session()
 
 
 def get_driver(headless=True):
@@ -23,7 +20,6 @@ def get_driver(headless=True):
     opts.add_argument("--window-size=1920,1080")
     opts.add_argument("--lang=zh-TW")
     opts.add_argument("--disable-gpu")
-    opts.add_argument("--no-sandbox")
     opts.add_argument("--disable-dev-shm-usage")
     try:
         return webdriver.Chrome(options=opts)
@@ -188,4 +184,3 @@ def fetch_tfam_exhibitions():
         driver.quit()
 
     return results
-print(fetch_tfam_exhibitions())

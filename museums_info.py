@@ -1,18 +1,25 @@
 import requests
-import json
 import pandas as pd
+import pymysql
 
-API_KEY = "YOUR API KEY"  # 請替換成你的 Google Places API Key
+from config import get_db_config, require_env
+
+# ==========================
+#  Google Places API 設定
+# ==========================
+
+# 金鑰從環境變數 / .env 讀取，見 config.py 與 .env.example
+API_KEY = require_env("GOOGLE_API_KEY")
 
 BASE_URL = "https://places.googleapis.com/v1/places:searchText"
 
-# 要回傳的欄位（注意：要保留 places.types 才能判斷是不是博物館）
+# 要回傳的欄位（注意：要有 places.types 才能判斷是不是博物館）
 FIELD_MASK = ",".join([
     "places.id",
     "places.displayName",
     "places.formattedAddress",
     "places.location",
-    "places.types",                           
+    "places.types",
     "places.websiteUri",
     "places.internationalPhoneNumber",
     "places.rating",
@@ -57,6 +64,13 @@ MUSEUM_TYPES = {"museum", "art_gallery"}
 
 
 # ==========================
+#  MySQL 設定
+# ==========================
+
+DB_CONFIG = get_db_config()
+
+
+# ==========================
 #  API 呼叫與工具函式
 # ==========================
 
@@ -74,7 +88,7 @@ def search_text_all_pages(text_query: str):
         if page_token:
             body["pageToken"] = page_token
 
-        resp = requests.post(BASE_URL, headers=HEADERS, json=body)
+        resp = requests.post(BASE_URL, headers=HEADERS, json=body, timeout=30)
         print(f"[searchText] {text_query} -> {resp.status_code}")
         data = resp.json()
 
@@ -127,10 +141,85 @@ def extract_row(place: dict) -> dict:
 
 
 # ==========================
+#  MySQL 相關函式
+# ==========================
+
+def get_db_connection():
+    conn = pymysql.connect(**DB_CONFIG)
+    return conn
+
+
+def init_table():
+    """建立資料表（若不存在），place_id 為 PRIMARY KEY"""
+    create_sql = """
+    CREATE TABLE IF NOT EXISTS taipei_museums_info (
+        place_id VARCHAR(100) ,
+        name VARCHAR(255) PRIMARY KEY,
+        address TEXT,
+        lat DOUBLE,
+        lng DOUBLE,
+        website TEXT,
+        phone VARCHAR(100),
+        rating DECIMAL(3,2),
+        opening_hours TEXT
+    ) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+    """
+    conn = get_db_connection()
+    try:
+        with conn.cursor() as cursor:
+            cursor.execute(create_sql)
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def upsert_museum_row(row: dict):
+    """
+    將一筆 row 寫入 MySQL
+    place_id 為 PRIMARY KEY，若已存在則更新（ON DUPLICATE KEY UPDATE）
+    """
+    sql = """
+    INSERT INTO taipei_museums_info
+    (place_id, name, address, lat, lng, website, phone, rating, opening_hours)
+    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+    ON DUPLICATE KEY UPDATE
+      name = VALUES(name),
+      address = VALUES(address),
+      lat = VALUES(lat),
+      lng = VALUES(lng),
+      website = VALUES(website),
+      phone = VALUES(phone),
+      rating = VALUES(rating),
+      opening_hours = VALUES(opening_hours);
+    """
+
+    conn = get_db_connection()
+    try:
+        with conn.cursor() as cursor:
+            cursor.execute(sql, (
+                row.get("place_id"),
+                row.get("館名"),
+                row.get("地址"),
+                row.get("緯度"),
+                row.get("經度"),
+                row.get("網站"),
+                row.get("電話"),
+                row.get("評分"),
+                row.get("營業時間"),
+            ))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+# ==========================
 #  主流程
 # ==========================
 
 def main():
+    # 建表（若尚未建立）
+    init_table()
+
     all_places_by_id = {}
 
     # 1) 抓雙北博物館、美術館
@@ -160,12 +249,18 @@ def main():
 
     print("✅ 最終保留的 place 數量：", len(selected_places))
 
-    # 4) 輸出 CSV（不含類型欄位）
+    # 4) 整理成 rows
     rows = [extract_row(p) for p in selected_places]
+
+    # 5) 存成 CSV
     df = pd.DataFrame(rows)
     df.to_csv("taipei_museums_info.csv", encoding="utf-8-sig", index=False)
+    print("📁 已輸出 CSV：taipei_museums_info.csv")
 
-    print("📁 已輸出：taipei_museums_info.csv")
+    # 6) 同步寫入 MySQL（place_id 為 PRIMARY KEY）
+    for row in rows:
+        upsert_museum_row(row)
+    print("🗄️ 已同步寫入 MySQL：資料表 taipei_museums_info")
 
 
 if __name__ == "__main__":

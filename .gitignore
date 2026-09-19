@@ -1,0 +1,18 @@
+# 機密
+.env
+*.pem
+*.key
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+
+# IDE
+.idea/
+
+# 本機用的大型圖資
+地圖/
+
+# shell 重導向誤建的檔案
+$null

@@ -1,19 +1,16 @@
 import re
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlparse
 
-import requests as req
+from http_client import make_session
 from bs4 import BeautifulSoup as bs
 from requests.utils import requote_uri
-import urllib3
 
 from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 
-urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-session = req.Session()
-session.verify = False
+session = make_session()
 
 
 def get_driver(headless=True):
@@ -25,7 +22,6 @@ def get_driver(headless=True):
     opts.add_argument("--window-size=1920,1080")
     opts.add_argument("--lang=zh-TW")
     opts.add_argument("--disable-gpu")
-    opts.add_argument("--no-sandbox")
     opts.add_argument("--disable-dev-shm-usage")
     try:
         return webdriver.Chrome(options=opts)
@@ -127,11 +123,17 @@ def fetch_huashan_exhibitions():
             except Exception:
                 pass
 
-            if not ex_link.startswith(("http://", "https://")):
+            # 只跟隨華山官網網域，避免 //other-host/ 之類的連結導向外部或內網
+            if urlparse(ex_link).hostname != urlparse(base_url).hostname:
                 continue
 
-            resp = session.get(ex_link, timeout=20)
-            resp.raise_for_status()
+            try:
+                resp = session.get(ex_link, timeout=40)
+                resp.raise_for_status()
+            except Exception as e:
+                # 單一展覽頁失敗不應讓整個流程中斷，略過該筆
+                print(f"⚠️ 華山展覽頁讀取失敗，略過：{ex_link} ({type(e).__name__})")
+                continue
             html = bs(resp.text, "html.parser")
 
             # 展覽名稱
@@ -190,4 +192,3 @@ def fetch_huashan_exhibitions():
     return results
 
 
-print(fetch_huashan_exhibitions())

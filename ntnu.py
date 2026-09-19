@@ -1,11 +1,8 @@
 import re
-import requests as req
+from http_client import make_session
 from bs4 import BeautifulSoup as bs
-import urllib3
 
-urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-session = req.Session()
-session.verify = False
+session = make_session()
 
 
 BASE_URL = "https://www.artmuse.ntnu.edu.tw/index.php/current_exhibit/"
@@ -183,4 +180,3 @@ def fetch_ntnu_exhibitions():
         })
 
     return results
-print(fetch_ntnu_exhibitions())
