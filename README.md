@@ -96,7 +96,7 @@ python app.py
 
 ## 資料表
 
-### `taipei_museums_info`（館舍）
+### `taipei_museums_info`（場館）
 | 欄位 | 說明 |
 |---|---|
 | `name`（主鍵） | 館名 |
