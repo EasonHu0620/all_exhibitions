@@ -76,7 +76,7 @@ def parse_moca_date(raw: str):
 def fetch_moca_exhibitions():
     base_url = "https://www.moca.taipei/tw"
     exhs_url = "https://www.moca.taipei/tw/ExhibitionAndEvent"
-    museum_name = "台北當代藝術館"
+    museum_name = "臺北當代藝術館"
 
     resp = session.get(exhs_url, timeout=20)
     resp.raise_for_status()

@@ -128,7 +128,7 @@ def save_to_mysql(exhibitions):
     """
     將展覽資料存入 MySQL。
     - title 為 PRIMARY KEY
-    - 已存在的 title 不會被覆蓋，只會補上 start_date / end_date / is_permanent
+    - 已存在的 title 只會更新 museum_name / start_date / end_date / is_permanent
     """
     if not exhibitions:
         print("⚠️ 沒有展覽資料，不寫入 MySQL。")
@@ -143,6 +143,7 @@ def save_to_mysql(exhibitions):
              url, image_url, location, time, category, extra)
             VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             ON DUPLICATE KEY UPDATE
+                museum_name  = VALUES(museum_name),
                 start_date   = VALUES(start_date),
                 end_date     = VALUES(end_date),
                 is_permanent = VALUES(is_permanent);
@@ -187,7 +188,7 @@ def save_to_mysql(exhibitions):
             cur.executemany(sql, data)
         conn.commit()
         print(f"✅ MySQL 寫入完成（嘗試寫入 {len(data)} 筆，"
-              f"重複的 title 只更新 start_date / end_date / is_permanent）")
+              f"重複的 title 只更新 museum_name / 日期 / is_permanent）")
     finally:
         conn.close()
 
@@ -254,7 +255,7 @@ def main():
         # 寫 CSV
         save_to_csv("all_museums_exhibitions.csv", exhibitions)
 
-        # 寫 MySQL（舊資料只補起訖日期與常設展欄位）
+        # 寫 MySQL（舊資料只更新館名、起訖日期與常設展欄位）
         save_to_mysql(exhibitions)
 
         print("🎉 程式執行完畢")
