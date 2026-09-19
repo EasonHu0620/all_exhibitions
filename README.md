@@ -4,7 +4,7 @@
 
 ## 功能
 
-- 爬取 7 個場館目前的展覽：名稱、日期、連結、圖片、地點、時間等
+- 爬取 7 個場館目前的展覽：名稱、日期（含統一格式的開始／結束日期）、連結、圖片、地點、時間等
 - 透過 Google Places API (New) 取得雙北博物館／美術館的基本資料：地址、座標、電話、網站、評分、營業時間
 - 輸出 CSV，並寫入 MySQL（展覽表以外鍵連結館舍表）
 
@@ -112,17 +112,35 @@ python app.py
 |---|---|
 | `title`（主鍵） | 展覽名稱 |
 | `museum_name`（外鍵） | 對應 `taipei_museums_info.name` |
-| `date`、`time`、`location` | 展期、時間、地點 |
+| `date` | 展期原始字串（各館格式不同，僅供參考） |
+| `start_date`、`end_date` | 統一格式的開始／結束日期（`DATE`，`YYYY-MM-DD`），無法解析時為 `NULL` |
+| `is_permanent` | 是否為常設／長期展：`1` = 是，`0` = 否 |
+| `time`、`location` | 時間、地點 |
 | `topic`、`category`、`extra` | 主題、類別、備註 |
 | `url`、`image_url` | 展覽連結與圖片 |
 
-寫入方式：`INSERT IGNORE`，已存在的展覽名稱會略過。
+#### 日期欄位規則
+
+| 情況 | `start_date` | `end_date` | `is_permanent` |
+|---|---|---|---|
+| 有開始與結束日期 | 開始日 | 結束日 | `0` |
+| 單日活動（松山、華山只有一個日期） | 該日 | 同一天 | `0` |
+| 只有開始日期、沒有結束（故宮 `2023-12-01~`、師大 `2024/7/1 起`） | 開始日 | `NULL` | `1` |
+| 故宮「常設展」 | `NULL` | `NULL` | `1` |
+
+因此 `end_date IS NULL` 只會出現在長期或常設展。
+
+各館的原始日期格式不同，解析規則寫在各館檔案的 `parse_xxx_date()`。
+
+CSV 對應欄位為「開始日期」「結束日期」「是否常設展」。
+
+寫入方式：新的展覽名稱會新增；已存在的展覽名稱**不會覆蓋**原有內容，只會更新 `start_date`、`end_date`、`is_permanent`（讓舊資料也能補上日期）。
 
 ## 注意事項
 
-- **舊資料不會被刪除**：資料庫只新增、不清除，已結束的展覽會一直留著，查詢時請用日期過濾。
+- **舊資料不會被刪除**：資料庫只新增、不清除，已結束的展覽會一直留著，查詢時請用 `start_date` / `end_date` 過濾（常設展的 `end_date` 為 `NULL`，可搭配 `is_permanent` 判斷）。
 - **展覽名稱是主鍵**：不同場館若有同名展覽，後者會被略過。
-- **館名必須對得上**：展覽的 `museum_name` 若不在 `taipei_museums_info` 中，該筆會被 `INSERT IGNORE` 靜默略過。新增場館時，請確認館名與館舍表一致。
+- **館名必須對得上**：展覽的 `museum_name` 若不在 `taipei_museums_info` 中，整批寫入會因外鍵錯誤（1452）而失敗。新增場館時，請確認館名與館舍表一致。
 - **Selenium 失敗不會中斷**：如果 Chrome 無法啟動，華山或北美館會被略過並印出警告，其他場館照常執行。
 - **網站改版**：爬蟲依賴各網站的 HTML 結構，網站改版後可能需要調整對應的檔案。
 
@@ -155,6 +173,7 @@ python app.py
 
 1. 新增一個檔案，實作 `fetch_xxx_exhibitions()`，回傳字典的列表。
 2. 每筆至少包含：`museum`、`title`、`date`、`url`、`image_url`、`location`、`time`、`topic`、`category`、`extra`。
+   另請提供 `start_date`、`end_date`（`YYYY-MM-DD` 或 `None`）與 `is_permanent`（`0` / `1`），規則見「日期欄位規則」。
 3. 使用 `from http_client import make_session` 取得 session，不要關閉憑證驗證。
 4. 在 `app.py` 的 `collect_all_exhibitions()` 加入呼叫。
 5. 確認 `museum` 的名稱與 `taipei_museums_info.name` 一致。
