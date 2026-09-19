@@ -1,13 +1,10 @@
-import requests as req
+from http_client import make_session
 from bs4 import BeautifulSoup as bs
 from urllib.parse import urljoin
 from requests.utils import requote_uri
-import urllib3
 import re  # ⭐ 新增：用來解析日期
 
-urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-session = req.Session()
-session.verify = False
+session = make_session()
 
 
 def parse_fubon_date(raw: str):
@@ -153,4 +150,3 @@ def fetch_fubon_exhibitions():
 if __name__ == "__main__":
     print(fetch_fubon_exhibitions())
 
-print(fetch_fubon_exhibitions())

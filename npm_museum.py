@@ -1,11 +1,8 @@
-import requests as req
+from http_client import make_session
 from bs4 import BeautifulSoup as bs
 from urllib.parse import urljoin
-import urllib3
 
-urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-session = req.Session()
-session.verify = False
+session = make_session()
 
 
 def parse_npm_date(raw: str):
