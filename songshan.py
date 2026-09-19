@@ -1,3 +1,5 @@
+import re
+
 from http_client import make_session
 from bs4 import BeautifulSoup as bs
 from urllib.parse import urljoin
@@ -12,41 +14,21 @@ def parse_songshan_date(raw: str):
     目前觀察到的格式：
     2025-11-01 - 2025-11-30
     2025-12-11 - 2025-12-14
+    2026-09-22            （單日活動）
 
     規則：
     - 有「開始 - 結束」：start_date、end_date 都給值，is_permanent = 0
-    - 只有一個日期：start_date 有值，end_date = None，is_permanent = 1
-    - 空字串或看起來怪怪的：全部回 None, None, 0
+    - 只有一個日期：視為單日活動，start_date = end_date = 該日，is_permanent = 0
+    - 空字串或找不到日期：全部回 None, None, 0
     """
     if not raw:
         return None, None, 0
 
-    s = raw.strip()
-    if not s:
-        return None, None, 0
-
-    # 如果有明顯範圍 " - "
-    if " - " in s:
-        left, right = s.split(" - ", 1)
-        start = left.strip() or None
-        end = right.strip() or None
-
-        # 松菸目前這批資料幾乎都是 YYYY-MM-DD，直接用原字串即可
-        if start and not end:
-            # 只有開始日期 -> 視為常設/長期
-            return start, None, 1
-        if start and end:
-            return start, end, 0
-        if start:
-            return start, None, 0
-        return None, None, 0
-
-    # 沒有 "-"，但有單一日期
-    start = s
-    if start:
-        # 只有開始日期 -> 視為常設/長期
-        return start, None, 1
-
+    dates = re.findall(r"\d{4}-\d{2}-\d{2}", raw)
+    if len(dates) >= 2:
+        return dates[0], dates[1], 0
+    if len(dates) == 1:
+        return dates[0], dates[0], 0
     return None, None, 0
 
 
@@ -109,7 +91,7 @@ def fetch_songshan_exhibitions():
             "date": ex_date,           # 原始日期字串
             "start_date": start_date,  # 解析後開始日期
             "end_date": end_date,      # 解析後結束日期
-            "is_permanent": is_permanent,  # 0: 一般展期, 1: 常設/長期展
+            "is_permanent": is_permanent,  # 松山皆為 0（單日活動 start = end）
             "topic": "",
             "url": link,
             "image_url": img,

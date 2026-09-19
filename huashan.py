@@ -43,7 +43,7 @@ def parse_huashan_date(raw: str):
 
     規則：
     - 有開始、有結束：一般展期 → is_permanent = 0
-    - 若未來只出現單一日期：視為長期/常設 → end_date=None, is_permanent=1
+    - 只有單一日期：視為單日活動 → start_date = end_date = 該日, is_permanent = 0
 
     回傳：start_date, end_date, is_permanent
     日期格式為 'YYYY-MM-DD' 或 None
@@ -76,16 +76,14 @@ def parse_huashan_date(raw: str):
 
         if start and end:
             return start, end, 0   # 一般展期
-        if start and not end:
-            return start, None, 1  # 長期展
         if start:
-            return start, None, 0
+            return start, start, 0  # 只有一個日期 -> 單日
         return None, None, 0
 
-    # 若只出現一段（預防）
+    # 若只出現一段
     start = parse_token(norm)
     if start:
-        return start, None, 1
+        return start, start, 0
 
     return None, None, 0
 
@@ -177,7 +175,7 @@ def fetch_huashan_exhibitions():
                 "date": ex_date,           # 原始日期字串
                 "start_date": start_date,  # 解析後開始日期
                 "end_date": end_date,      # 解析後結束日期
-                "is_permanent": is_permanent,  # 0: 一般展期, 1: 長期/常設
+                "is_permanent": is_permanent,  # 皆為 0（單日活動 start = end）
                 "topic": "",
                 "url": ex_link,
                 "image_url": ex_img,

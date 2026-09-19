@@ -29,6 +29,7 @@ FIELDNAMES = [
     "展覽日期",
     "開始日期",
     "結束日期",
+    "是否常設展",
     "展覽主題",
     "展覽連結",
     "展覽圖片",
@@ -64,6 +65,7 @@ def normalize(ex):
         "展覽日期": ex.get("date", ""),
         "開始日期": clean_date(ex.get("start_date")) or "",
         "結束日期": clean_date(ex.get("end_date")) or "",
+        "是否常設展": 1 if ex.get("is_permanent") else 0,
         "展覽主題": ex.get("topic", ""),
         "展覽連結": ex.get("url", ""),
         "展覽圖片": ex.get("image_url", ""),
@@ -89,6 +91,7 @@ def init_table():
         date         VARCHAR(255),
         start_date   DATE NULL,
         end_date     DATE NULL,
+        is_permanent TINYINT(1) NOT NULL DEFAULT 0,
         topic        VARCHAR(255),
         url          TEXT,
         image_url    TEXT,
@@ -108,13 +111,15 @@ def init_table():
     try:
         with conn.cursor() as cur:
             cur.execute(create_sql)
-            # 舊資料表沒有 start_date / end_date，補上欄位
-            for col in ("start_date", "end_date"):
+            # 舊資料表沒有這幾個欄位，補上
+            for col, ddl in (
+                ("start_date", "DATE NULL"),
+                ("end_date", "DATE NULL"),
+                ("is_permanent", "TINYINT(1) NOT NULL DEFAULT 0"),
+            ):
                 cur.execute(f"SHOW COLUMNS FROM {TABLE_NAME} LIKE %s", (col,))
                 if not cur.fetchone():
-                    cur.execute(
-                        f"ALTER TABLE {TABLE_NAME} ADD COLUMN {col} DATE NULL AFTER date"
-                    )
+                    cur.execute(f"ALTER TABLE {TABLE_NAME} ADD COLUMN {col} {ddl}")
         conn.commit()
     finally:
         conn.close()
@@ -123,7 +128,7 @@ def save_to_mysql(exhibitions):
     """
     將展覽資料存入 MySQL。
     - title 為 PRIMARY KEY
-    - 已存在的 title 不會被覆蓋，只會補上 start_date / end_date
+    - 已存在的 title 不會被覆蓋，只會補上 start_date / end_date / is_permanent
     """
     if not exhibitions:
         print("⚠️ 沒有展覽資料，不寫入 MySQL。")
@@ -134,12 +139,13 @@ def save_to_mysql(exhibitions):
         with conn.cursor() as cur:
             sql = f"""
             INSERT INTO {TABLE_NAME}
-            (title, museum_name, date, start_date, end_date, topic, url,
-             image_url, location, time, category, extra)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            (title, museum_name, date, start_date, end_date, is_permanent, topic,
+             url, image_url, location, time, category, extra)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             ON DUPLICATE KEY UPDATE
-                start_date = VALUES(start_date),
-                end_date   = VALUES(end_date);
+                start_date   = VALUES(start_date),
+                end_date     = VALUES(end_date),
+                is_permanent = VALUES(is_permanent);
             """
 
             data = []
@@ -149,6 +155,7 @@ def save_to_mysql(exhibitions):
                 date = ex.get("date", "")
                 start_date = clean_date(ex.get("start_date"))
                 end_date = clean_date(ex.get("end_date"))
+                is_permanent = 1 if ex.get("is_permanent") else 0
                 topic = ex.get("topic", "")
                 url = ex.get("url", "")
                 image_url = ex.get("image_url", "")
@@ -167,6 +174,7 @@ def save_to_mysql(exhibitions):
                     date,
                     start_date,
                     end_date,
+                    is_permanent,
                     topic,
                     url,
                     image_url,
@@ -179,7 +187,7 @@ def save_to_mysql(exhibitions):
             cur.executemany(sql, data)
         conn.commit()
         print(f"✅ MySQL 寫入完成（嘗試寫入 {len(data)} 筆，"
-              f"重複的 title 只更新 start_date / end_date）")
+              f"重複的 title 只更新 start_date / end_date / is_permanent）")
     finally:
         conn.close()
 
@@ -246,7 +254,7 @@ def main():
         # 寫 CSV
         save_to_csv("all_museums_exhibitions.csv", exhibitions)
 
-        # 寫 MySQL（舊資料只補起訖日期欄位）
+        # 寫 MySQL（舊資料只補起訖日期與常設展欄位）
         save_to_mysql(exhibitions)
 
         print("🎉 程式執行完畢")
