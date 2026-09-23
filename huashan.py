@@ -1,7 +1,7 @@
 import re
-from urllib.parse import urljoin, urlparse
+from urllib.parse import urljoin
 
-from http_client import make_session
+from http_client import is_same_host, make_session
 from bs4 import BeautifulSoup as bs
 from requests.utils import requote_uri
 
@@ -122,7 +122,7 @@ def fetch_huashan_exhibitions():
                 pass
 
             # 只跟隨華山官網網域，避免 //other-host/ 之類的連結導向外部或內網
-            if urlparse(ex_link).hostname != urlparse(base_url).hostname:
+            if not is_same_host(ex_link, base_url):
                 continue
 
             try:

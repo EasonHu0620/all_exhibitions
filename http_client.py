@@ -5,6 +5,7 @@
   因此只關閉 VERIFY_X509_STRICT；憑證鏈與主機名稱仍會完整驗證。
 """
 import ssl
+from urllib.parse import urlparse
 
 import requests
 from requests.adapters import HTTPAdapter
@@ -43,3 +44,8 @@ def make_session() -> requests.Session:
     )
     session.mount("https://", _RelaxedStrictAdapter(max_retries=retry))
     return session
+
+
+def is_same_host(url: str, base_url: str) -> bool:
+    """只跟隨與官網同網域的連結，避免被導向外部或內網（如 127.0.0.1）。"""
+    return bool(url) and urlparse(url).hostname == urlparse(base_url).hostname

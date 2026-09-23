@@ -14,7 +14,7 @@
 |---|---|---|
 | 松山文創園區 | `songshan.py` | requests + BeautifulSoup |
 | 國立故宮博物院 | `npm_museum.py` | requests + BeautifulSoup |
-| 台北當代藝術館 | `moca.py` | requests + BeautifulSoup |
+| 臺北當代藝術館 | `moca.py` | requests + BeautifulSoup |
 | 富邦美術館 | `fubon.py` | requests + BeautifulSoup |
 | 師大美術館 | `ntnu.py` | requests + BeautifulSoup |
 | 華山1914文創園區 | `huashan.py` | Selenium + requests |
@@ -27,7 +27,8 @@
 ├── app.py                        # 主程式：爬取所有展覽 → CSV + MySQL
 ├── museums_info.py               # 館舍資料：Google Places API → CSV + MySQL
 ├── config.py                     # 讀取 .env / 環境變數（金鑰、資料庫帳密）
-├── http_client.py                # 共用的 requests Session（憑證驗證、重試）
+├── http_client.py                # 共用的 requests Session（憑證驗證、重試、網域檢查）
+├── csv_utils.py                  # CSV 公式注入防護
 ├── songshan.py / npm_museum.py / moca.py / fubon.py / ntnu.py / huashan.py / tfam.py
 ├── all_museums_exhibitions.csv   # 輸出：全部展覽
 ├── taipei_museums_info.csv       # 輸出：館舍資料
@@ -64,7 +65,10 @@ DB_PORT=3306
 DB_USER=你的資料庫帳號
 DB_PASSWORD=你的資料庫密碼
 DB_NAME=exhibitions
+DB_SSL_CA=                        # 選填：連遠端資料庫時的 CA 憑證路徑
 ```
+
+> 資料庫在本機（`127.0.0.1`）時 `DB_SSL_CA` 留空即可；連遠端資料庫時請設定，連線會以 TLS 加密並驗證伺服器憑證，避免密碼以明文傳送。
 
 > ⚠️ `.env` 已被 `.gitignore` 排除，**請勿 commit**。也可以直接設定同名的系統環境變數，環境變數的優先權高於 `.env`。
 
@@ -110,8 +114,8 @@ python app.py
 ### `taipei_exhibitions`（展覽）
 | 欄位 | 說明 |
 |---|---|
-| `title`（主鍵） | 展覽名稱 |
-| `museum_name`（外鍵） | 對應 `taipei_museums_info.name` |
+| `title`（主鍵之一） | 展覽名稱 |
+| `museum_name`（主鍵之一、外鍵） | 對應 `taipei_museums_info.name` |
 | `date` | 展期原始字串（各館格式不同，僅供參考） |
 | `start_date`、`end_date` | 統一格式的開始／結束日期（`DATE`，`YYYY-MM-DD`），無法解析時為 `NULL` |
 | `is_permanent` | 是否為常設／長期展：`1` = 是，`0` = 否 |
@@ -127,6 +131,7 @@ python app.py
 | 單日活動（松山、華山只有一個日期） | 該日 | 同一天 | `0` |
 | 只有開始日期、沒有結束（故宮 `2023-12-01~`、師大 `2024/7/1 起`） | 開始日 | `NULL` | `1` |
 | 故宮「常設展」 | `NULL` | `NULL` | `1` |
+| 當代館（網站只有月／日） | 從去年、今年、明年中選展期最接近執行當天的年份 | 同左（結束月份較小時為隔年） | `0` |
 
 因此 `end_date IS NULL` 只會出現在長期或常設展。
 
@@ -134,14 +139,17 @@ python app.py
 
 CSV 對應欄位為「開始日期」「結束日期」「是否常設展」。
 
-寫入方式：新的展覽名稱會新增；已存在的展覽名稱**不會覆蓋**原有內容，只會更新 `museum_name`、`start_date`、`end_date`、`is_permanent`（讓舊資料補上日期，館名有改也會同步）。
+寫入方式：以「展覽名稱 + 館名」判斷是否為同一筆。新的展覽會新增；已存在的展覽**不會覆蓋**原有內容，只會更新 `start_date`、`end_date`、`is_permanent`（讓舊資料補上日期）。
+
+館名改寫法時（例如「台北當代藝術館」→「臺北當代藝術館」），把舊→新對照加進 `app.py` 的 `MUSEUM_ALIASES`，建表時會把舊資料的館名換成新的。舊版資料表（主鍵只有 `title`）也會在建表時自動改成 `(title, museum_name)`。
 
 ## 注意事項
 
 - **舊資料不會被刪除**：資料庫只新增、不清除，已結束的展覽會一直留著，查詢時請用 `start_date` / `end_date` 過濾（常設展的 `end_date` 為 `NULL`，可搭配 `is_permanent` 判斷）。
-- **展覽名稱是主鍵**：不同場館若有同名展覽，後者會被略過。
+- **主鍵是「展覽名稱 + 館名」**：不同場館的同名展覽會各自存成一筆，不會互相覆蓋。
 - **館名必須對得上**：展覽的 `museum_name` 若不在 `taipei_museums_info` 中，整批寫入會因外鍵錯誤（1452）而失敗。新增場館時，請確認館名與館舍表一致。
-- **Selenium 失敗不會中斷**：如果 Chrome 無法啟動，華山或北美館會被略過並印出警告，其他場館照常執行。
+- **單一場館失敗不會中斷**：某個網站連不上、改版或 Chrome 無法啟動時，該館會被略過並印出 `⚠️` 警告，其他場館照常抓取並寫入 CSV 與 MySQL。單一展覽內頁讀取失敗時，也只略過該筆。
+- **館舍表以館名為主鍵**：`museums_info.py` 遇到沒有館名，或不同地點同名時，會略過並印出警告（同名只保留第一筆）。
 - **網站改版**：爬蟲依賴各網站的 HTML 結構，網站改版後可能需要調整對應的檔案。
 
 ## 資安設計
@@ -149,8 +157,9 @@ CSV 對應欄位為「開始日期」「結束日期」「是否常設展」。
 - 金鑰與密碼從環境變數讀取，程式碼與 git 歷史中沒有機密。
 - 所有 HTTPS 請求都啟用憑證驗證（`http_client.py`）。部分政府站台的憑證需要系統信任庫，因此使用 `truststore`，並只放寬 Python 3.13 的 `VERIFY_X509_STRICT`，憑證鏈與主機名稱仍會驗證。
 - SQL 全部使用參數化查詢。
-- 華山爬蟲只會跟隨官網網域的連結。
-- CSV 輸出會處理以 `=`、`+`、`-`、`@` 開頭的內容，避免 Excel 公式注入。
+- 需要進入展覽內頁的爬蟲（松山、華山、師大）只會跟隨官網網域的連結，避免被導向外部或內網位址。
+- 兩個 CSV 輸出都會處理以 `=`、`+`、`-`、`@` 開頭的內容，避免 Excel 公式注入（因此電話 `+886…` 在 CSV 中會顯示為 `'+886…`，資料庫內不受影響）。
+- 連遠端資料庫時可設定 `DB_SSL_CA` 以 TLS 加密連線。
 - 建議：
   - 將 Google 金鑰限制為只能呼叫 Places API (New)。
   - MySQL 只監聽 `127.0.0.1`（`my.ini` 設定 `bind-address=127.0.0.1`）。

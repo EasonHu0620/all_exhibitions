@@ -1,6 +1,6 @@
 import re
 
-from http_client import make_session
+from http_client import is_same_host, make_session
 from bs4 import BeautifulSoup as bs
 from urllib.parse import urljoin
 
@@ -51,11 +51,17 @@ def fetch_songshan_exhibitions():
         if a and a.has_attr("href"):
             link = urljoin(base_url, a["href"])
 
-        if not link:
+        # 只跟隨松山官網網域的連結
+        if not is_same_host(link, base_url):
             continue
 
-        ex_resp = session.get(link, timeout=20)
-        ex_resp.raise_for_status()
+        try:
+            ex_resp = session.get(link, timeout=20)
+            ex_resp.raise_for_status()
+        except Exception as e:
+            # 單一展覽頁失敗不應讓整個流程中斷，略過該筆
+            print(f"⚠️ 松山展覽頁讀取失敗，略過：{link} ({type(e).__name__})")
+            continue
         ex_html = bs(ex_resp.text, "html.parser")
 
         # 展覽名稱

@@ -29,7 +29,7 @@ def require_env(name: str) -> str:
 
 
 def get_db_config() -> dict:
-    return {
+    config = {
         "host": os.environ.get("DB_HOST", "127.0.0.1"),
         "port": int(os.environ.get("DB_PORT", "3306")),
         "user": require_env("DB_USER"),
@@ -37,3 +37,9 @@ def get_db_config() -> dict:
         "database": os.environ.get("DB_NAME", "exhibitions"),
         "charset": "utf8mb4",
     }
+    # 連遠端資料庫時設定 DB_SSL_CA（CA 憑證路徑），以 TLS 加密並驗證伺服器憑證
+    ssl_ca = os.environ.get("DB_SSL_CA")
+    if ssl_ca:
+        # 有 CA 時 PyMySQL 預設就會驗證憑證與主機名稱
+        config["ssl"] = {"ca": ssl_ca}
+    return config

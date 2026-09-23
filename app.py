@@ -6,6 +6,7 @@ import os
 import pymysql
 
 from config import get_db_config
+from csv_utils import csv_safe
 from songshan import fetch_songshan_exhibitions
 from npm_museum import fetch_npm_exhibitions
 from moca import fetch_moca_exhibitions
@@ -20,6 +21,11 @@ from ntnu import fetch_ntnu_exhibitions
 DB_CONFIG = get_db_config()
 
 TABLE_NAME = "taipei_exhibitions"
+
+# 館名改過的舊寫法 → 新寫法，建表時會把舊資料的館名換成新的
+MUSEUM_ALIASES = {
+    "台北當代藝術館": "臺北當代藝術館",
+}
 
 # ==================== 輸出 CSV 欄位 ====================
 
@@ -38,13 +44,6 @@ FIELDNAMES = [
     "展覽類別",
     "備註",
 ]
-
-
-def csv_safe(value):
-    """避免以 = + - @ 開頭的爬取內容在 Excel 被當成公式執行（CSV injection）。"""
-    if isinstance(value, str) and value.startswith(("=", "+", "-", "@", "\t", "\r")):
-        return "'" + value
-    return value
 
 
 def clean_date(value):
@@ -99,7 +98,7 @@ def init_table():
         time         VARCHAR(255),
         category     VARCHAR(255),
         extra        TEXT,
-        PRIMARY KEY (title),
+        PRIMARY KEY (title, museum_name),
         CONSTRAINT fk_museum
             FOREIGN KEY (museum_name)
             REFERENCES taipei_museums_info(name)
@@ -120,6 +119,29 @@ def init_table():
                 cur.execute(f"SHOW COLUMNS FROM {TABLE_NAME} LIKE %s", (col,))
                 if not cur.fetchone():
                     cur.execute(f"ALTER TABLE {TABLE_NAME} ADD COLUMN {col} {ddl}")
+
+            # 舊資料表的主鍵只有 title，不同館的同名展覽會互相覆蓋，改成 (title, museum_name)
+            cur.execute(f"SHOW KEYS FROM {TABLE_NAME} WHERE Key_name = 'PRIMARY'")
+            pk_cols = [row[4] for row in cur.fetchall()]  # Column_name
+            if pk_cols == ["title"]:
+                cur.execute(
+                    f"ALTER TABLE {TABLE_NAME} "
+                    f"DROP PRIMARY KEY, ADD PRIMARY KEY (title, museum_name)"
+                )
+
+            # 舊館名換成新館名；新館名已有同名展覽時，刪掉舊館名那筆
+            for old_name, new_name in MUSEUM_ALIASES.items():
+                cur.execute(
+                    f"DELETE old FROM {TABLE_NAME} AS old "
+                    f"JOIN {TABLE_NAME} AS cur "
+                    f"  ON cur.title = old.title AND cur.museum_name = %s "
+                    f"WHERE old.museum_name = %s",
+                    (new_name, old_name),
+                )
+                cur.execute(
+                    f"UPDATE {TABLE_NAME} SET museum_name = %s WHERE museum_name = %s",
+                    (new_name, old_name),
+                )
         conn.commit()
     finally:
         conn.close()
@@ -127,8 +149,8 @@ def init_table():
 def save_to_mysql(exhibitions):
     """
     將展覽資料存入 MySQL。
-    - title 為 PRIMARY KEY
-    - 已存在的 title 只會更新 museum_name / start_date / end_date / is_permanent
+    - (title, museum_name) 為 PRIMARY KEY，不同館的同名展覽各自一筆
+    - 已存在的展覽只會更新 start_date / end_date / is_permanent
     """
     if not exhibitions:
         print("⚠️ 沒有展覽資料，不寫入 MySQL。")
@@ -143,7 +165,6 @@ def save_to_mysql(exhibitions):
              url, image_url, location, time, category, extra)
             VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             ON DUPLICATE KEY UPDATE
-                museum_name  = VALUES(museum_name),
                 start_date   = VALUES(start_date),
                 end_date     = VALUES(end_date),
                 is_permanent = VALUES(is_permanent);
@@ -188,43 +209,36 @@ def save_to_mysql(exhibitions):
             cur.executemany(sql, data)
         conn.commit()
         print(f"✅ MySQL 寫入完成（嘗試寫入 {len(data)} 筆，"
-              f"重複的 title 只更新 museum_name / 日期 / is_permanent）")
+              f"已存在的展覽只更新日期 / is_permanent）")
     finally:
         conn.close()
 
 
 # ==================== 收集展覽資料 =====================
 
+SCRAPERS = [
+    ("松山文創園區", "松山", fetch_songshan_exhibitions),
+    ("國立故宮博物院", "故宮", fetch_npm_exhibitions),
+    ("當代藝術館", "當代", fetch_moca_exhibitions),
+    ("華山1914文創園區", "華山", fetch_huashan_exhibitions),
+    ("富邦美術館", "富邦", fetch_fubon_exhibitions),
+    ("臺北市立美術館", "北美館", fetch_tfam_exhibitions),
+    ("師大美術館", "師大", fetch_ntnu_exhibitions),
+]
+
+
 def collect_all_exhibitions():
+    """依序抓取各館；單一館失敗只略過該館，不影響其他館與後續寫入。"""
     all_exhibitions = []
 
-    print("👉 抓取 松山文創園區...")
-    all_exhibitions.extend(fetch_songshan_exhibitions())
-    print(f"   松山累積筆數：{len(all_exhibitions)}")
-
-    print("👉 抓取 國立故宮博物院...")
-    all_exhibitions.extend(fetch_npm_exhibitions())
-    print(f"   故宮累積筆數：{len(all_exhibitions)}")
-
-    print("👉 抓取 當代藝術館...")
-    all_exhibitions.extend(fetch_moca_exhibitions())
-    print(f"   當代累積筆數：{len(all_exhibitions)}")
-
-    print("👉 抓取 華山1914文創園區...")
-    all_exhibitions.extend(fetch_huashan_exhibitions())
-    print(f"   華山累積筆數：{len(all_exhibitions)}")
-
-    print("👉 抓取 富邦美術館...")
-    all_exhibitions.extend(fetch_fubon_exhibitions())
-    print(f"   富邦累積筆數：{len(all_exhibitions)}")
-
-    print("👉 抓取 臺北市立美術館...")
-    all_exhibitions.extend(fetch_tfam_exhibitions())
-    print(f"   北美館累積筆數：{len(all_exhibitions)}")
-
-    print("👉 抓取 師大美術館...")
-    all_exhibitions.extend(fetch_ntnu_exhibitions())
-    print(f"   師大累積筆數：{len(all_exhibitions)}")
+    for full_name, short_name, fetch in SCRAPERS:
+        print(f"👉 抓取 {full_name}...")
+        try:
+            all_exhibitions.extend(fetch())
+        except Exception as e:
+            print(f"⚠️ {full_name} 抓取失敗，略過：{type(e).__name__}: {e}")
+            continue
+        print(f"   {short_name}累積筆數：{len(all_exhibitions)}")
 
     return all_exhibitions
 
@@ -255,7 +269,7 @@ def main():
         # 寫 CSV
         save_to_csv("all_museums_exhibitions.csv", exhibitions)
 
-        # 寫 MySQL（舊資料只更新館名、起訖日期與常設展欄位）
+        # 寫 MySQL（舊資料只更新起訖日期與常設展欄位）
         save_to_mysql(exhibitions)
 
         print("🎉 程式執行完畢")

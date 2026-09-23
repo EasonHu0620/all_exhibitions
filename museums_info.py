@@ -3,6 +3,7 @@ import pandas as pd
 import pymysql
 
 from config import get_db_config, require_env
+from csv_utils import csv_safe
 
 # ==========================
 #  Google Places API 設定
@@ -150,7 +151,7 @@ def get_db_connection():
 
 
 def init_table():
-    """建立資料表（若不存在），place_id 為 PRIMARY KEY"""
+    """建立資料表（若不存在），name 為 PRIMARY KEY（展覽表以館名做外鍵）"""
     create_sql = """
     CREATE TABLE IF NOT EXISTS taipei_museums_info (
         place_id VARCHAR(100) ,
@@ -176,7 +177,7 @@ def init_table():
 def upsert_museum_row(row: dict):
     """
     將一筆 row 寫入 MySQL
-    place_id 為 PRIMARY KEY，若已存在則更新（ON DUPLICATE KEY UPDATE）
+    name 為 PRIMARY KEY，同名的館已存在則更新其餘欄位（ON DUPLICATE KEY UPDATE）
     """
     sql = """
     INSERT INTO taipei_museums_info
@@ -250,14 +251,28 @@ def main():
     print("✅ 最終保留的 place 數量：", len(selected_places))
 
     # 4) 整理成 rows
-    rows = [extract_row(p) for p in selected_places]
+    #    館名是資料表主鍵：沒有館名的略過；不同地點同名時只保留第一筆，避免互相覆蓋
+    rows = []
+    seen_names = {}
+    for p in selected_places:
+        row = extract_row(p)
+        name = row["館名"]
+        if not name:
+            print(f"⚠️ 地點沒有館名，略過：{row['place_id']}")
+            continue
+        if name in seen_names:
+            print(f"⚠️ 館名重複，只保留第一筆：{name}"
+                  f"（保留 {seen_names[name]}，略過 {row['place_id']}）")
+            continue
+        seen_names[name] = row["place_id"]
+        rows.append(row)
 
     # 5) 存成 CSV
-    df = pd.DataFrame(rows)
+    df = pd.DataFrame(rows).map(csv_safe)  # 避免 Excel 公式注入
     df.to_csv("taipei_museums_info.csv", encoding="utf-8-sig", index=False)
     print("📁 已輸出 CSV：taipei_museums_info.csv")
 
-    # 6) 同步寫入 MySQL（place_id 為 PRIMARY KEY）
+    # 6) 同步寫入 MySQL（name 為 PRIMARY KEY）
     for row in rows:
         upsert_museum_row(row)
     print("🗄️ 已同步寫入 MySQL：資料表 taipei_museums_info")

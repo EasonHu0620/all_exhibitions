@@ -159,8 +159,10 @@ def fetch_tfam_exhibitions():
             ex_link = ""
             try:
                 link = it.find_element(By.XPATH, "./div[2]/div")
-                link_num = link.get_attribute("id")[-3:] or ""
-                ex_link = f"{BASE}Exhibition/Exhibition_Special.aspx?ddlLang=zh-tw&id={link_num}"
+                # 取 id 結尾的完整數字（不要只取 3 位，id 到 1000 以上會錯）
+                m = re.search(r"(\d+)$", link.get_attribute("id") or "")
+                if m:
+                    ex_link = f"{BASE}Exhibition/Exhibition_Special.aspx?ddlLang=zh-tw&id={m.group(1)}"
             except Exception:
                 pass
 

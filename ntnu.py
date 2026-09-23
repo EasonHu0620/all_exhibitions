@@ -1,5 +1,7 @@
 import re
-from http_client import make_session
+from urllib.parse import urljoin
+
+from http_client import is_same_host, make_session
 from bs4 import BeautifulSoup as bs
 
 session = make_session()
@@ -71,41 +73,6 @@ def parse_ntnu_date(raw: str):
     return None, None, 0
 
 
-def museum_info(base_url: str):
-    r = session.get(base_url, timeout=15)
-    r.raise_for_status()
-    html = bs(r.text, "html.parser")
-
-    # 館名
-    NTNU = html.find("h4", class_="widget-title")
-    ntnu_text = NTNU.text.strip() if NTNU else "師大美術館 NTNU Art Museum"
-
-    # 地址
-    address = html.find_all("div", style="line-height: 1.5;")
-    address_text = ""
-    if len(address) > 1:
-        address_text = address[1].get_text().strip().split("：", 1)[-1]
-
-    # 開放 / 休館時間
-    time_blocks = html.find_all("p", style="margin-bottom: 4px;")
-    open_time_text, off_time_text = None, None
-    if time_blocks:
-        offtime_tag = time_blocks.pop()
-        if offtime_tag:
-            off_time_text = offtime_tag.get_text().split("：", 1)[-1]
-
-        open_list = []
-        for i in time_blocks:
-            opentime_text = i.get_text().strip()
-            open_list.append(opentime_text)
-        if len(open_list) >= 2:
-            open_time_text = f"{open_list[0].split('：', 1)[-1]}, {open_list[1]}"
-        elif open_list:
-            open_time_text = open_list[0]
-
-    return ntnu_text, address_text, open_time_text, off_time_text
-
-
 def get_exhibitions(base_url: str):
     r = session.get(base_url, timeout=15)
     r.raise_for_status()
@@ -118,7 +85,7 @@ def get_exhibitions(base_url: str):
         img = f.find("img")
         cap = f.find("figcaption")
 
-        link = a["href"] if a and a.has_attr("href") else None
+        link = urljoin(base_url, a["href"]) if a and a.has_attr("href") else None
         image = img["src"] if img and img.has_attr("src") else None
         title = cap.get_text(strip=True) if cap else None
 
@@ -150,15 +117,18 @@ def get_time_and_place(exh_url: str):
 
 
 def fetch_ntnu_exhibitions():
-    museum_name, address_text, open_time, off_time = museum_info(BASE_URL)
-
     exhibitions = get_exhibitions(BASE_URL)
     results = []
 
     for ex in exhibitions:
         time_text, place_text = None, None
-        if ex.get("url"):
-            time_text, place_text = get_time_and_place(ex["url"])
+        # 只跟隨師大美術館官網網域的連結
+        if is_same_host(ex.get("url"), BASE_URL):
+            try:
+                time_text, place_text = get_time_and_place(ex["url"])
+            except Exception as e:
+                # 單一展覽頁失敗不應讓整個流程中斷，只是少了時間與地點
+                print(f"⚠️ 師大展覽頁讀取失敗，略過時間與地點：{ex['url']} ({type(e).__name__})")
 
         # ⭐ 解析日期為 start_date / end_date / is_permanent
         start_date, end_date, is_permanent = parse_ntnu_date(time_text or "")

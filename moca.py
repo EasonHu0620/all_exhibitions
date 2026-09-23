@@ -3,7 +3,7 @@ from bs4 import BeautifulSoup as bs
 from urllib.parse import urljoin
 from requests.utils import requote_uri
 import re
-from datetime import datetime
+from datetime import date, datetime
 
 session = make_session()
 
@@ -15,12 +15,11 @@ def parse_moca_date(raw: str):
     11 / 15Sat. - 03 / 29Sun.
 
     規則：
-    - 年份 = 抓取當下年份（base_year）
-    - 若 end_month < start_month，視為跨年展：
-        start_year = base_year
-        end_year = base_year + 1
-    - 正常情況：
-        start_year = end_year = base_year
+    - 網站沒有年份，從「去年、今年、明年」三種開始年份中，
+      選展期最接近今天的一個（今天落在展期內的優先）。
+      例如 1 月抓到「11/15 - 03/29」→ 去年 11/15 到今年 3/29；
+      12 月抓到「01/10 - 03/01」→ 明年。
+    - 若 end_month < start_month，視為跨年展：end_year = start_year + 1
     - 都有開始和結束日期 -> is_permanent = 0
     如果解析失敗，就回 (None, None, 0)
     """
@@ -55,17 +54,32 @@ def parse_moca_date(raw: str):
         # 如果有缺就先當作無法解析
         return None, None, 0
 
-    base_year = datetime.today().year
+    today = datetime.today().date()
 
-    start_year = base_year
-    end_year = base_year
+    def distance(rng):
+        # 今天在展期內 = 0，否則為距離展期最近一端的天數
+        start, end = rng
+        if start <= today <= end:
+            return 0
+        return (start - today).days if today < start else (today - end).days
 
-    # 若結束月份比開始月份小，視為跨年
-    if end_mm < start_mm:
-        end_year = base_year + 1
+    candidates = []
+    for start_year in (today.year - 1, today.year, today.year + 1):
+        # 若結束月份比開始月份小，視為跨年
+        end_year = start_year + 1 if end_mm < start_mm else start_year
+        try:
+            candidates.append((date(start_year, start_mm, start_dd),
+                               date(end_year, end_mm, end_dd)))
+        except ValueError:
+            # 不存在的日期（如 02/30，或非閏年的 02/29）
+            continue
 
-    start_date = f"{start_year}-{start_mm:02d}-{start_dd:02d}"
-    end_date = f"{end_year}-{end_mm:02d}-{end_dd:02d}"
+    if not candidates:
+        return None, None, 0
+
+    start, end = min(candidates, key=distance)
+    start_date = start.isoformat()
+    end_date = end.isoformat()
 
     # MOCA 這一批都有完整起訖，視為一般展期
     is_permanent = 0
